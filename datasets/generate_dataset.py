@@ -33,7 +33,9 @@ class GeneratorDataset(Dataset, ABC):
                 logger.error(f'[ImagesDataset] Neither images nor a video was provided! Execution has stopped! {self.source}')
                 exit(1)
             path.mkdir(parents=True, exist_ok=True)
+            logger.info("Running ffmpeg to extract frames from video...")
             os.system(f'ffmpeg -i {video_file} -vf fps={self.config.fps} -q:v 1 {self.source}/source/%05d.png')
+            logger.info("Finished extracting frames from video.")
 
         self.images = sorted(glob(f'{self.source}/source/*.jpg') + glob(f'{self.source}/source/*.png'))
 
