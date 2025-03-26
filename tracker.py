@@ -38,7 +38,7 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 import util
-from configs.config import parse_args
+from configs.config import parse_args, generate_configs_from_base
 from datasets.generate_dataset import GeneratorDataset
 from datasets.image_dataset import ImagesDataset
 from face_detector import FaceDetector
@@ -717,5 +717,28 @@ class Tracker(object):
 
 if __name__ == '__main__':
     config = parse_args()
-    ff = Tracker(config, device='cuda:0')
-    ff.run()
+
+    if hasattr(config, "is_base_config") and config.is_base_config:
+        configs = generate_configs_from_base(base_cfg=config)    
+        for i, config in enumerate(configs):
+            if hasattr(config, "test_run") and config.test_run:
+                print("`test_run` key was set to True, thus not running anything.")
+                print("The config.actor path is: ", config.actor)
+                print("The config.save_folder path is:", config.save_folder)
+                print("The complete config is (one example):\n")
+                print(config)
+                break
+
+            print(f"\n>>> ({i + 1}/{len(configs)}) Running tracker for {config.actor}...\n")
+            ff = Tracker(config, device='cuda:0')
+            ff.run()
+    else:
+        # Original behaviour
+        if hasattr(config, "test_run") and config.test_run:
+            print("`test_run` key was set to True, thus not running anything.")
+            print("The complete config is:\n")
+            print(config)
+            exit(0)
+        
+        ff = Tracker(config, device='cuda:0')
+        ff.run()

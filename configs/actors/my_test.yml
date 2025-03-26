@@ -1,8 +1,0 @@
-# Tracker config
-
-actor: './input/my_test'
-save_folder: './output/'
-optimize_shape: true
-optimize_jaw: true
-begin_frames: 1
-keyframes: [ 0, 1 ]
