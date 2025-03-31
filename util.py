@@ -13,8 +13,9 @@
 # for Intelligent Systems. All rights reserved.
 #
 # Contact: mica@tue.mpg.de
-
+import os 
 import glob
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -23,6 +24,9 @@ import torch.nn.functional as F
 from torch import nn
 from torchvision.transforms.functional import gaussian_blur
 from tqdm import tqdm
+
+from pprint import pprint
+from typing import Callable, Optional, Union
 
 from flame.mediapipe.landmarks import LIPS_LANDMARK_IDS, get_idx, NOSE_LANDMARK_IDS
 
@@ -467,3 +471,189 @@ def get_flame_extra_faces():
              [2708, 2709, 2943],
              [2782, 2933, 2783],
              [2708, 2943, 2945]])).cuda()[None, ...]
+
+"""
+    Folder Utilities
+"""
+
+def get_unique_extensions(folder_path: Path, ignore: Optional[set[str]] = None) -> dict:
+    """
+    Scans the given folder and its immediate subfolders, returning a dictionary where the key 
+    `"root"` corresponds to the file extensions found directly in `folder_path`, and each subfolder 
+    name maps to a set of unique file extensions found within it.
+    
+    Args:
+        folder_path (str): The path of the folder to scan.
+        ignore (set[str], optional): A set of subfolder names to ignore when scanning. If provided, 
+            these subfolders will be excluded from the results.
+    
+    Returns:
+        dict: A dictionary with keys as folder names (or "root") and values as sets of file
+            extensions.
+    """
+    extensions = {"root": set()}
+
+    # List all entries in the given folder
+    for entry in os.listdir(folder_path):
+        full_path = os.path.join(folder_path, entry)
+        
+        # If it's a file in the root folder, process its extension
+        if os.path.isfile(full_path):
+            _, ext = os.path.splitext(entry)
+            if ext:
+                extensions["root"].add(ext)
+                
+        # If it's a directory, look at its files only (not recursively)
+        elif os.path.isdir(full_path):
+            # Skip ignored subfolders
+            if ignore and entry in ignore:
+                continue
+
+            subfolder_exts = set()
+            for sub_entry in os.listdir(full_path):
+                sub_full_path = os.path.join(full_path, sub_entry)
+                if os.path.isfile(sub_full_path):
+                    _, ext = os.path.splitext(sub_entry)
+                    if ext:
+                        subfolder_exts.add(ext)
+            extensions[entry] = subfolder_exts
+
+    return extensions
+
+
+def folder_content_matches_expected(
+    input_folder: Path, 
+    expected_content: dict[str, set[str]],
+    ignore: Optional[set[str]] = None,
+) -> bool:
+    """
+    Checks whether the contents of the `input_folder` match exactly with the given expected 
+    content.
+    
+    The function uses `get_unique_extensions()` to gather the actual content of the folder and 
+    compares it with the expected content dictionary. The expected content should be a dictionary 
+    with keys corresponding to the subfolder names (or "root") and values as sets of file 
+    extensions.
+    
+    Args:
+        input_folder (str): The path of the folder to check.
+        expected_content (dict[str, set[str]]): The expected directory content (e.g., 
+            `{"root": {".obj", ".avi", ".log"}, "camera": {".jpg"}, ...}`).
+        ignore (set[str], optional): A set of subfolder names to ignore when checking the folder. 
+            If provided, these subfolders will be excluded from the check.
+    
+    Returns:
+        bool: True if the folder contents exactly match the expected content, False otherwise.
+    
+    Example:
+    >>> expected = {
+    ...     "root": {".obj", ".avi", ".log"},
+    ...     "camera": {".jpg"},
+    ...     "checkpoint": {".frame"},
+    ...     "depth": {".png"},
+    ...     "initialization": {".jpg"},
+    ...     "input": {".png"},
+    ...     "logs": {".7"},
+    ...     "mesh": {".ply"},
+    ...     "pyramid": {".png"},
+    ...     "video": {".jpg"}
+    ... }
+    >>> check_folder_contents("path/to/input_folder", expected)
+    True
+    """
+    actual_content = get_unique_extensions(input_folder, ignore=ignore)
+    
+    # Remove the folders in ignore if present on "expected_content"
+    filtered_expected_content = {
+        k: v for k, v in expected_content.items() if not ignore or (ignore and k not in ignore)
+    }
+            
+    return actual_content == filtered_expected_content
+
+
+def filter_subfolders_by_depth(
+    root_path: Path,
+    filter_func: Callable,
+    depth: int = 1,
+    return_on: bool = True, 
+    path_as_str: bool = False,
+    *args, 
+    **kwargs
+) -> list[Union[Path, str]]:
+    """
+    Iterates through the folder tree starting at `root_path` and applies the given callable
+    `filter_func` to each subfolder at the specified `depth`. Returns a list of subfolder paths at 
+    that depth for which the callable returns a value equal to `return_on`.
+
+    Args:
+        root_path (str): The starting folder path.
+        depth (int): The depth at which to process subfolders (1 means immediate subfolders,
+            2 means subfolders within immediate subfolders, etc.).
+        filter_func (callable): A function that accepts a folder path as its first argument 
+            (plus any additional positional or keyword arguments) and returns a boolean.
+        return_on (bool, optional): If True, returns paths for which `filter_func` returns True.
+                                    If False, returns paths for which `filter_func` returns False.
+                                    Defaults to True.
+        path_as_str (bool, optional): If True, returns the paths as str instead of Path objects.
+        *args: Additional positional arguments to pass to `filter_func`.
+        **kwargs: Additional keyword arguments to pass to `filter_func`.
+
+    Returns:
+        list: A list of subfolder paths at the specified depth for which 
+            `filter_func(folder_path, *args, **kwargs) == return_on`.
+
+    Example:
+    ```
+    >>> # "Metrical-Tracker" folder structure:
+    >>> # Metrical-Tracker/
+    >>> # ├── frown
+    >>> # │   ├── camera/
+    >>> # │   ├── checkpoint/
+    >>> # │   ├── ...
+    >>> # ├── smile
+    >>> # │   ├── camera/
+    >>> # │   ├── checkpoint/
+    >>> # │   ├── ...
+    >>> # ├── ...
+    >>> # And you want to find out whether the subfolders (i.e., "frown", "smile", etc.) have the 
+    >>> # expected content
+    >>> expected = {
+    ...     "root": {".obj", ".avi", ".log"},
+    ...     "camera": {".jpg"},
+    ...     "checkpoint": {".frame"},
+    ...     "depth": {".png"},
+    ...     "initialization": {".jpg"},
+    ...     "input": {".png"},
+    ...     "logs": {".7"},
+    ...     "mesh": {".ply"},
+    ...     "pyramid": {".png"},
+    ...     "video": {".jpg"}
+    ... }
+    >>> filter_subfolders_by_depth("Metrical-Tracker", 1, folder_content_matches_expected, True, expected)
+    ['Metrical-Tracker/frown', 'Metrical-Tracker/smile', ...]
+    ```
+    """
+    matching_paths = []
+    # Count the number of os.sep in the base path to determine the starting depth
+    base_depth = root_path.rstrip(os.sep).count(os.sep)
+    
+    for current_path, subdirs, _ in os.walk(root_path):
+        # Calculate current depth relative to the base folder
+        current_depth = current_path.rstrip(os.sep).count(os.sep) - base_depth
+
+        # Process folders exactly at the target depth
+        if current_depth == depth:
+            if filter_func(current_path, *args, **kwargs) == return_on:
+                # Append the path as str or Path object based on the flag
+                if path_as_str:
+                    matching_paths.append(str(Path(current_path)))
+                else:
+                    matching_paths.append(Path(current_path))
+                    
+            # Prune subdirectories to prevent further descent
+            subdirs[:] = []
+        elif current_depth > depth:
+            # Shouldn't occur due to pruning above
+            continue
+
+    return matching_paths

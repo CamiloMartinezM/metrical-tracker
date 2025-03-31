@@ -22,5 +22,5 @@ test_run: true
 optimize_shape: true
 optimize_jaw: true
 begin_frames: 1
-fps: 29.97
+fps: 30
 keyframes: [ 0, 1 ]

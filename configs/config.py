@@ -127,7 +127,7 @@ def parse_cfg(cfg_file):
 
 
 def generate_configs_from_base(base_cfg: dict) -> list[dict]:
-    """ Generate tracker configurations for each video inside the base actor folder.
+    """Generate tracker configurations for each video inside the base actor folder.
     
     The `base_cfg` could look like this:
 
