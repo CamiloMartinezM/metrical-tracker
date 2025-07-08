@@ -38,7 +38,9 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 import util
-from configs.config import parse_args
+from pprint import pprint
+from time import time
+from configs.config import parse_args, generate_configs_from_base
 from datasets.generate_dataset import GeneratorDataset
 from datasets.image_dataset import ImagesDataset
 from face_detector import FaceDetector
@@ -716,6 +718,80 @@ class Tracker(object):
 
 
 if __name__ == '__main__':
+    expected_content = {
+        'root': {'.obj', '.avi', '.log'}, 
+        'depth': {'.png'}, 
+        'checkpoint': {'.frame'}, 
+        'logs': {'.7'}, 
+        'mesh': {'.ply'}, 
+        'camera': {'.jpg'}, 
+        'input': {'.png'}, 
+        'pyramid': {'.png'}, 
+        'video': {'.jpg'}, 
+        'initialization': {'.jpg'}
+    }
+
     config = parse_args()
-    ff = Tracker(config, device='cuda:0')
-    ff.run()
+
+    if hasattr(config, "is_base_config") and config.is_base_config:
+        # Generate all the configs from the base_config. That is, if directory structure of the 
+        # base config's 'actor' folder (given from the 'actor' key) is:
+        # face_recordings/
+        # ├── actor_1
+        # │   ├── bite_lower_lip
+        # │   ├── bite_upper_lip
+        # │   ├── ...
+        # ├── actor_2
+        # │   ├── bite_lower_lip
+        # │   ├── ...
+        # Then, the 3 generated configs will have 'actor' key: 
+        # face_recordings/actor_1/bite_lower_lip, face_recordings/actor_1/bite_upper_lip,
+        # and face_recordings/actor_2/bite_lower_lip, respectively.
+        configs = generate_configs_from_base(base_cfg=config)
+
+        # Get the current folders in the config.save_folder that were processed before, i.e.,
+        # their content matches the expected content
+        processed_folders = util.filter_subfolders_by_depth(
+            config.save_folder,
+            filter_func=util.folder_content_matches_expected,
+            depth=1,
+            return_on=True,
+            path_as_str=False, # Return the path as a Path object
+            ignore="logs", # Ignore the subfolder "logs", as its extension is .7, .8, .10, etc.
+            expected_content=expected_content,
+        )
+
+        # Get the name of the folder, instead of the full path
+        processed_folders = [folder.name for folder in processed_folders]
+        print(f"Processed folders: {processed_folders}")
+
+        for i, config in enumerate(configs):
+            # Check if the current config.actor folder was processed before
+            if Path(config.actor).name in processed_folders:
+                print(f"\n>>> ({i + 1}/{len(configs)}) Folder {config.actor} was already "
+                      + "processed. Skipping...")
+                continue
+
+            if hasattr(config, "test_run") and config.test_run:
+                print("\n`test_run` key was set to True, thus not running anything.")
+                print("The config.actor path is: ", config.actor)
+                print("The config.save_folder path is:", config.save_folder)
+                print("The complete config is (one example):\n")
+                print(config)
+                break
+
+            print(f"\n>>> ({i + 1}/{len(configs)}) Running tracker for {config.actor}...")
+            start_time = time()
+            ff = Tracker(config, device='cuda:0')
+            ff.run()
+            print("\t\t Finished in", round(time() - start_time, 2), "seconds.")
+    else:
+        # Original behaviour
+        if hasattr(config, "test_run") and config.test_run:
+            print("`test_run` key was set to True, thus not running anything.")
+            print("The complete config is:\n")
+            print(config)
+            exit(0)
+        
+        ff = Tracker(config, device='cuda:0')
+        ff.run()
