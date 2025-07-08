@@ -83,12 +83,12 @@ def update_cfg(cfg, cfg_file):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--cfg', type=str, help='Configuration file', required=True)
+    parser.add_argument("--cfg", type=str, help="Configuration file", required=True)
 
     args = parser.parse_args()
-    print(args, end='\n\n')
+    print(args, end="\n\n")
 
-    
+
 def load_yaml_file(file_path: str) -> dict:
     """Load a YAML file and return its contents as a dictionary.
 
@@ -174,8 +174,12 @@ def generate_configs_from_base(base_cfg: dict) -> list[dict]:
 
             new_cfg = base_cfg.clone()
             new_cfg.actor = str(subdir)  # Update actor path
-            # Save folder based on subdir
-            new_cfg.save_folder = str(base_cfg.save_folder / subdir.stem)
+            # Save folder based on subdir parent and subdir stem
+            # e.g., if subdir is `.../2/bite_lower_lip`, then save folder will be
+            # `.../Metrical-Tracker/2/bite_lower_lip`
+            new_cfg.save_folder = str(
+                Path(base_cfg.save_folder) / subdir.parent.stem / subdir.stem
+            )
             new_cfg.config_name = subdir.stem  # Name based on the last folder
 
             configs.append(new_cfg)
