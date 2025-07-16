@@ -175,11 +175,10 @@ def generate_configs_from_base(base_cfg: dict) -> list[dict]:
             new_cfg = base_cfg.clone()
             new_cfg.actor = str(subdir)  # Update actor path
             # Save folder based on subdir parent and subdir stem
-            # e.g., if subdir is `.../2/bite_lower_lip`, then save folder will be
-            # `.../Metrical-Tracker/2/bite_lower_lip`
-            new_cfg.save_folder = str(
-                Path(base_cfg.save_folder) / subdir.parent.stem / subdir.stem
-            )
+            # e.g., if subdir is `../2/bite_lower_lip`, then save folder will be
+            # `../Metrical-Tracker/2/`, because the missing folder `bite_lower_lip` is handled
+            # by tracker.py
+            new_cfg.save_folder = str(Path(base_cfg.save_folder) / subdir.parent.stem) + "/"
             new_cfg.config_name = subdir.stem  # Name based on the last folder
 
             configs.append(new_cfg)

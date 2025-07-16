@@ -29,7 +29,17 @@ import torch.nn.functional as F
 import trimesh
 from loguru import logger
 from pytorch3d.io import load_obj
-from pytorch3d.renderer import RasterizationSettings, PointLights, MeshRenderer, MeshRasterizer, TexturesVertex, SoftPhongShader, look_at_view_transform, PerspectiveCameras, BlendParams
+from pytorch3d.renderer import (
+    RasterizationSettings,
+    PointLights,
+    MeshRenderer,
+    MeshRasterizer,
+    TexturesVertex,
+    SoftPhongShader,
+    look_at_view_transform,
+    PerspectiveCameras,
+    BlendParams,
+)
 from pytorch3d.structures import Meshes
 from pytorch3d.transforms import matrix_to_rotation_6d, rotation_6d_to_matrix
 from pytorch3d.utils import opencv_from_cameras_projection
@@ -57,7 +67,9 @@ cudnn.benchmark = False
 np.random.seed(rank)
 I = torch.eye(3)[None].cuda().detach()
 I6D = matrix_to_rotation_6d(I)
-mediapipe_idx = np.load('flame/mediapipe/mediapipe_landmark_embedding.npz', allow_pickle=True, encoding='latin1')['landmark_indices'].astype(int)
+mediapipe_idx = np.load(
+    "flame/mediapipe/mediapipe_landmark_embedding.npz", allow_pickle=True, encoding="latin1"
+)["landmark_indices"].astype(int)
 left_iris_flame = [4597, 4542, 4510, 4603, 4570]
 right_iris_flame = [4051, 3996, 3964, 3932, 4028]
 left_iris_mp = [468, 469, 470, 471, 472]
@@ -75,10 +87,10 @@ class View(Enum):
 
 
 class Tracker(object):
-    def __init__(self, config, device='cuda:0'):
+    def __init__(self, config, device="cuda:0"):
         self.config = config
         self.device = device
-        self.face_detector = FaceDetector('google')
+        self.face_detector = FaceDetector("google")
         self.pyr_levels = config.pyr_levels
         self.cameras = PerspectiveCameras()
         self.actor_name = self.config.config_name
@@ -86,7 +98,7 @@ class Tracker(object):
         self.sigma = None if self.config.sigma == -1 else self.config.sigma
         self.global_step = 0
 
-        logger.add(os.path.join(self.config.save_folder, self.actor_name, 'train.log'))
+        logger.add(os.path.join(self.config.save_folder, self.actor_name, "train.log"))
 
         # Latter will be set up
         self.frame = 0
@@ -100,7 +112,7 @@ class Tracker(object):
         self.mesh_folder = os.path.join(self.save_folder, self.actor_name, "mesh")
         self.depth_folder = os.path.join(self.save_folder, self.actor_name, "depth")
         self.create_output_folders()
-        self.writer = SummaryWriter(log_dir=self.save_folder + self.actor_name + '/logs')
+        self.writer = SummaryWriter(log_dir=self.save_folder + self.actor_name + "/logs")
         self.setup_renderer()
 
     def get_image_size(self):
@@ -115,7 +127,7 @@ class Tracker(object):
         Path(self.pyramid_folder).mkdir(parents=True, exist_ok=True)
 
     def setup_renderer(self):
-        mesh_file = 'data/head_template_mesh.obj'
+        mesh_file = "data/head_template_mesh.obj"
         self.config.image_size = self.get_image_size()
         self.flame = FLAME(self.config).to(self.device)
         self.flametex = FLAMETex(self.config).to(self.device)
@@ -126,59 +138,59 @@ class Tracker(object):
             image_size=self.get_image_size(),
             faces_per_pixel=1,
             cull_backfaces=True,
-            perspective_correct=True
+            perspective_correct=True,
         )
 
         self.lights = PointLights(
             device=self.device,
             location=((0.0, 0.0, 5.0),),
             ambient_color=((0.5, 0.5, 0.5),),
-            diffuse_color=((0.5, 0.5, 0.5),)
+            diffuse_color=((0.5, 0.5, 0.5),),
         )
 
         self.mesh_rasterizer = MeshRasterizer(raster_settings=raster_settings)
         self.debug_renderer = MeshRenderer(
             rasterizer=self.mesh_rasterizer,
-            shader=SoftPhongShader(device=self.device, lights=self.lights)
+            shader=SoftPhongShader(device=self.device, lights=self.lights),
         )
 
     def load_checkpoint(self, idx=-1):
         if not os.path.exists(self.checkpoint_folder):
             return False
-        snaps = sorted(glob(self.checkpoint_folder + '/*.frame'))
+        snaps = sorted(glob(self.checkpoint_folder + "/*.frame"))
         if len(snaps) == 0:
-            logger.info('Training from beginning...')
+            logger.info("Training from beginning...")
             return False
         if len(snaps) == len(self.dataset):
-            logger.info('Training has finished...')
+            logger.info("Training has finished...")
             exit(0)
 
         last_snap = snaps[idx]
         payload = torch.load(last_snap)
 
-        camera_params = payload['camera']
-        self.R = nn.Parameter(torch.from_numpy(camera_params['R']).to(self.device))
-        self.t = nn.Parameter(torch.from_numpy(camera_params['t']).to(self.device))
-        self.focal_length = nn.Parameter(torch.from_numpy(camera_params['fl']).to(self.device))
-        self.principal_point = nn.Parameter(torch.from_numpy(camera_params['pp']).to(self.device))
+        camera_params = payload["camera"]
+        self.R = nn.Parameter(torch.from_numpy(camera_params["R"]).to(self.device))
+        self.t = nn.Parameter(torch.from_numpy(camera_params["t"]).to(self.device))
+        self.focal_length = nn.Parameter(torch.from_numpy(camera_params["fl"]).to(self.device))
+        self.principal_point = nn.Parameter(torch.from_numpy(camera_params["pp"]).to(self.device))
 
-        flame_params = payload['flame']
-        self.tex = nn.Parameter(torch.from_numpy(flame_params['tex']).to(self.device))
-        self.exp = nn.Parameter(torch.from_numpy(flame_params['exp']).to(self.device))
-        self.sh = nn.Parameter(torch.from_numpy(flame_params['sh']).to(self.device))
-        self.shape = nn.Parameter(torch.from_numpy(flame_params['shape']).to(self.device))
-        self.mica_shape = nn.Parameter(torch.from_numpy(flame_params['shape']).to(self.device))
-        self.eyes = nn.Parameter(torch.from_numpy(flame_params['eyes']).to(self.device))
-        self.eyelids = nn.Parameter(torch.from_numpy(flame_params['eyelids']).to(self.device))
-        self.jaw = nn.Parameter(torch.from_numpy(flame_params['jaw']).to(self.device))
+        flame_params = payload["flame"]
+        self.tex = nn.Parameter(torch.from_numpy(flame_params["tex"]).to(self.device))
+        self.exp = nn.Parameter(torch.from_numpy(flame_params["exp"]).to(self.device))
+        self.sh = nn.Parameter(torch.from_numpy(flame_params["sh"]).to(self.device))
+        self.shape = nn.Parameter(torch.from_numpy(flame_params["shape"]).to(self.device))
+        self.mica_shape = nn.Parameter(torch.from_numpy(flame_params["shape"]).to(self.device))
+        self.eyes = nn.Parameter(torch.from_numpy(flame_params["eyes"]).to(self.device))
+        self.eyelids = nn.Parameter(torch.from_numpy(flame_params["eyelids"]).to(self.device))
+        self.jaw = nn.Parameter(torch.from_numpy(flame_params["jaw"]).to(self.device))
 
-        self.frame = int(payload['frame_id'])
-        self.global_step = payload['global_step']
+        self.frame = int(payload["frame_id"])
+        self.global_step = payload["global_step"]
         self.update_prev_frame()
-        self.image_size = torch.from_numpy(payload['img_size'])[None].to(self.device)
+        self.image_size = torch.from_numpy(payload["img_size"])[None].to(self.device)
         self.setup_renderer()
 
-        logger.info(f'Snapshot loaded for frame {self.frame}')
+        logger.info(f"Snapshot loaded for frame {self.frame}")
 
         return True
 
@@ -186,29 +198,29 @@ class Tracker(object):
         opencv = opencv_from_cameras_projection(self.cameras, self.image_size)
 
         frame = {
-            'flame': {
-                'exp': self.exp.clone().detach().cpu().numpy(),
-                'shape': self.shape.clone().detach().cpu().numpy(),
-                'tex': self.tex.clone().detach().cpu().numpy(),
-                'sh': self.sh.clone().detach().cpu().numpy(),
-                'eyes': self.eyes.clone().detach().cpu().numpy(),
-                'eyelids': self.eyelids.clone().detach().cpu().numpy(),
-                'jaw': self.jaw.clone().detach().cpu().numpy()
+            "flame": {
+                "exp": self.exp.clone().detach().cpu().numpy(),
+                "shape": self.shape.clone().detach().cpu().numpy(),
+                "tex": self.tex.clone().detach().cpu().numpy(),
+                "sh": self.sh.clone().detach().cpu().numpy(),
+                "eyes": self.eyes.clone().detach().cpu().numpy(),
+                "eyelids": self.eyelids.clone().detach().cpu().numpy(),
+                "jaw": self.jaw.clone().detach().cpu().numpy(),
             },
-            'camera': {
-                'R': self.R.clone().detach().cpu().numpy(),
-                't': self.t.clone().detach().cpu().numpy(),
-                'fl': self.focal_length.clone().detach().cpu().numpy(),
-                'pp': self.principal_point.clone().detach().cpu().numpy(),
+            "camera": {
+                "R": self.R.clone().detach().cpu().numpy(),
+                "t": self.t.clone().detach().cpu().numpy(),
+                "fl": self.focal_length.clone().detach().cpu().numpy(),
+                "pp": self.principal_point.clone().detach().cpu().numpy(),
             },
-            'opencv': {
-                'R': opencv[0].clone().detach().cpu().numpy(),
-                't': opencv[1].clone().detach().cpu().numpy(),
-                'K': opencv[2].clone().detach().cpu().numpy(),
+            "opencv": {
+                "R": opencv[0].clone().detach().cpu().numpy(),
+                "t": opencv[1].clone().detach().cpu().numpy(),
+                "K": opencv[2].clone().detach().cpu().numpy(),
             },
-            'img_size': self.image_size.clone().detach().cpu().numpy()[0],
-            'frame_id': frame_id,
-            'global_step': self.global_step
+            "img_size": self.image_size.clone().detach().cpu().numpy()[0],
+            "frame_id": frame_id,
+            "global_step": self.global_step,
         }
 
         vertices, _, _ = self.flame(
@@ -217,32 +229,46 @@ class Tracker(object):
             expression_params=self.exp,
             eye_pose_params=self.eyes,
             jaw_pose_params=self.jaw,
-            eyelid_params=self.eyelids
+            eyelid_params=self.eyelids,
         )
 
         f = self.diff_renderer.faces[0].cpu().numpy()
         v = vertices[0].cpu().numpy()
 
-        trimesh.Trimesh(faces=f, vertices=v, process=False).export(f'{self.mesh_folder}/{frame_id}.ply')
-        torch.save(frame, f'{self.checkpoint_folder}/{frame_id}.frame')
+        trimesh.Trimesh(faces=f, vertices=v, process=False).export(
+            f"{self.mesh_folder}/{frame_id}.ply"
+        )
+        torch.save(frame, f"{self.checkpoint_folder}/{frame_id}.frame")
 
     def save_canonical(self):
         canon = os.path.join(self.save_folder, self.actor_name, "canonical.obj")
         if not os.path.exists(canon):
             from scipy.spatial.transform import Rotation as R
+
             rotvec = np.zeros(3)
             rotvec[0] = 12.0 * np.pi / 180.0
-            jaw = matrix_to_rotation_6d(torch.from_numpy(R.from_rotvec(rotvec).as_matrix())[None, ...].cuda()).float()
-            vertices = self.flame(cameras=torch.inverse(self.cameras.R), shape_params=self.shape, jaw_pose_params=jaw)[0].detach()
+            jaw = matrix_to_rotation_6d(
+                torch.from_numpy(R.from_rotvec(rotvec).as_matrix())[None, ...].cuda()
+            ).float()
+            vertices = self.flame(
+                cameras=torch.inverse(self.cameras.R), shape_params=self.shape, jaw_pose_params=jaw
+            )[0].detach()
             faces = self.diff_renderer.faces[0].cpu().numpy()
-            trimesh.Trimesh(faces=faces, vertices=vertices[0].cpu().numpy(), process=False).export(canon)
+            trimesh.Trimesh(faces=faces, vertices=vertices[0].cpu().numpy(), process=False).export(
+                canon
+            )
 
     def get_heatmap(self, values):
         l2 = tensor2im(values)
         l2 = cv2.cvtColor(l2, cv2.COLOR_RGB2BGR)
         l2 = cv2.normalize(l2, None, 0, 255, cv2.NORM_MINMAX)
         heatmap = cv2.applyColorMap(l2, cv2.COLORMAP_JET)
-        heatmap = cv2.cvtColor(cv2.addWeighted(heatmap, 0.75, l2, 0.25, 0).astype(np.uint8), cv2.COLOR_BGR2RGB) / 255.
+        heatmap = (
+            cv2.cvtColor(
+                cv2.addWeighted(heatmap, 0.75, l2, 0.25, 0).astype(np.uint8), cv2.COLOR_BGR2RGB
+            )
+            / 255.0
+        )
         heatmap = torch.from_numpy(heatmap).permute(2, 0, 1)
 
         return heatmap
@@ -260,16 +286,32 @@ class Tracker(object):
         if faces is None:
             faces = self.faces.verts_idx.cuda()[None].repeat(B, 1, 1)
         if not white:
-            verts_rgb = torch.from_numpy(np.array([80, 140, 200]) / 255.).cuda().float()[None, None, :].repeat(B, V, 1)
+            verts_rgb = (
+                torch.from_numpy(np.array([80, 140, 200]) / 255.0)
+                .cuda()
+                .float()[None, None, :]
+                .repeat(B, V, 1)
+            )
         else:
-            verts_rgb = torch.from_numpy(np.array([1.0, 1.0, 1.0])).cuda().float()[None, None, :].repeat(B, V, 1)
+            verts_rgb = (
+                torch.from_numpy(np.array([1.0, 1.0, 1.0]))
+                .cuda()
+                .float()[None, None, :]
+                .repeat(B, V, 1)
+            )
         textures = TexturesVertex(verts_features=verts_rgb.cuda())
-        meshes_world = Meshes(verts=[vertices[i] for i in range(B)], faces=[faces[i] for i in range(B)], textures=textures)
+        meshes_world = Meshes(
+            verts=[vertices[i] for i in range(B)],
+            faces=[faces[i] for i in range(B)],
+            textures=textures,
+        )
 
         blend = BlendParams(background_color=(1.0, 1.0, 1.0))
 
         fragments = self.mesh_rasterizer(meshes_world, cameras=self.cameras)
-        rendering = self.debug_renderer.shader(fragments, meshes_world, cameras=self.cameras, blend_params=blend)
+        rendering = self.debug_renderer.shader(
+            fragments, meshes_world, cameras=self.cameras, blend_params=blend
+        )
         rendering = rendering.permute(0, 3, 1, 2).detach()
         return rendering[:, 0:3, :, :]
 
@@ -290,89 +332,121 @@ class Tracker(object):
         self.shape = nn.Parameter(self.mica_shape)
         self.mica_shape = nn.Parameter(self.mica_shape)
         self.tex = nn.Parameter(torch.zeros(bz, self.config.tex_params).float().to(self.device))
-        self.exp = nn.Parameter(torch.zeros(bz, self.config.num_exp_params).float().to(self.device))
+        self.exp = nn.Parameter(
+            torch.zeros(bz, self.config.num_exp_params).float().to(self.device)
+        )
         self.sh = nn.Parameter(torch.zeros(bz, 9, 3).float().to(self.device))
-        self.focal_length = nn.Parameter(torch.tensor([[5000 / self.get_image_size()[0]]]).to(self.device))
+        self.focal_length = nn.Parameter(
+            torch.tensor([[5000 / self.get_image_size()[0]]]).to(self.device)
+        )
         self.principal_point = nn.Parameter(torch.zeros(bz, 2).float().to(self.device))
-        self.eyes = nn.Parameter(torch.cat([matrix_to_rotation_6d(I), matrix_to_rotation_6d(I)], dim=1))
+        self.eyes = nn.Parameter(
+            torch.cat([matrix_to_rotation_6d(I), matrix_to_rotation_6d(I)], dim=1)
+        )
         self.jaw = nn.Parameter(matrix_to_rotation_6d(I))
         self.eyelids = nn.Parameter(torch.zeros(bz, 2).float().to(self.device))
 
     @staticmethod
-    def save_tensor(tensor, path='tensor.jpg'):
+    def save_tensor(tensor, path="tensor.jpg"):
         img = (tensor[0].detach().cpu().numpy().transpose(1, 2, 0).copy() * 255)[:, :, [2, 1, 0]]
         img = np.minimum(np.maximum(img, 0), 255).astype(np.uint8)
         cv2.imwrite(path, img)
 
     def parse_mask(self, ops, batch, visualization=False):
-        _, _, h, w = ops['alpha_images'].shape
-        result = ops['mask_images_rendering']
+        _, _, h, w = ops["alpha_images"].shape
+        result = ops["mask_images_rendering"]
 
         if visualization:
-            result = ops['mask_images']
+            result = ops["mask_images"]
 
         return result.detach()
 
     def update(self, param_groups):
         for param in param_groups:
-            for i, name in enumerate(param['name']):
-                setattr(self, name, nn.Parameter(param['params'][i].clone().detach()))
+            for i, name in enumerate(param["name"]):
+                setattr(self, name, nn.Parameter(param["params"][i].clone().detach()))
 
     def get_param(self, name, param_groups):
         for param in param_groups:
-            if name in param['name']:
-                return param['params'][param['name'].index(name)]
+            if name in param["name"]:
+                return param["params"][param["name"].index(name)]
         return getattr(self, name)
 
     def clone_params_tracking(self):
         params = [
-            {'params': [nn.Parameter(self.exp.clone())], 'lr': 0.025, 'name': ['exp']},
-            {'params': [nn.Parameter(self.eyes.clone())], 'lr': 0.001, 'name': ['eyes']},
-            {'params': [nn.Parameter(self.eyelids.clone())], 'lr': 0.001, 'name': ['eyelids']},
-            {'params': [nn.Parameter(self.R.clone())], 'lr': self.config.rotation_lr, 'name': ['R']},
-            {'params': [nn.Parameter(self.t.clone())], 'lr': self.config.translation_lr, 'name': ['t']},
-            {'params': [nn.Parameter(self.sh.clone())], 'lr': 0.001, 'name': ['sh']}
+            {"params": [nn.Parameter(self.exp.clone())], "lr": 0.025, "name": ["exp"]},
+            {"params": [nn.Parameter(self.eyes.clone())], "lr": 0.001, "name": ["eyes"]},
+            {"params": [nn.Parameter(self.eyelids.clone())], "lr": 0.001, "name": ["eyelids"]},
+            {
+                "params": [nn.Parameter(self.R.clone())],
+                "lr": self.config.rotation_lr,
+                "name": ["R"],
+            },
+            {
+                "params": [nn.Parameter(self.t.clone())],
+                "lr": self.config.translation_lr,
+                "name": ["t"],
+            },
+            {"params": [nn.Parameter(self.sh.clone())], "lr": 0.001, "name": ["sh"]},
         ]
 
         if self.config.optimize_jaw:
-            params.append({'params': [nn.Parameter(self.jaw.clone().detach())], 'lr': 0.001, 'name': ['jaw']})
+            params.append(
+                {"params": [nn.Parameter(self.jaw.clone().detach())], "lr": 0.001, "name": ["jaw"]}
+            )
 
         return params
 
     def clone_params_initialization(self):
         params = [
-            {'params': [nn.Parameter(self.exp.clone())], 'lr': 0.025, 'name': ['exp']},
-            {'params': [nn.Parameter(self.eyes.clone())], 'lr': 0.001, 'name': ['eyes']},
-            {'params': [nn.Parameter(self.eyelids.clone())], 'lr': 0.01, 'name': ['eyelids']},
-            {'params': [nn.Parameter(self.sh.clone())], 'lr': 0.01, 'name': ['sh']},
-            {'params': [nn.Parameter(self.t.clone())], 'lr': 0.005, 'name': ['t']},
-            {'params': [nn.Parameter(self.R.clone())], 'lr': 0.005, 'name': ['R']},
-            {'params': [nn.Parameter(self.principal_point.clone())], 'lr': 0.001, 'name': ['principal_point']},
-            {'params': [nn.Parameter(self.focal_length.clone())], 'lr': 0.001, 'name': ['focal_length']}
+            {"params": [nn.Parameter(self.exp.clone())], "lr": 0.025, "name": ["exp"]},
+            {"params": [nn.Parameter(self.eyes.clone())], "lr": 0.001, "name": ["eyes"]},
+            {"params": [nn.Parameter(self.eyelids.clone())], "lr": 0.01, "name": ["eyelids"]},
+            {"params": [nn.Parameter(self.sh.clone())], "lr": 0.01, "name": ["sh"]},
+            {"params": [nn.Parameter(self.t.clone())], "lr": 0.005, "name": ["t"]},
+            {"params": [nn.Parameter(self.R.clone())], "lr": 0.005, "name": ["R"]},
+            {
+                "params": [nn.Parameter(self.principal_point.clone())],
+                "lr": 0.001,
+                "name": ["principal_point"],
+            },
+            {
+                "params": [nn.Parameter(self.focal_length.clone())],
+                "lr": 0.001,
+                "name": ["focal_length"],
+            },
         ]
 
         if self.config.optimize_shape:
-            params.append({'params': [nn.Parameter(self.shape.clone().detach())], 'lr': 0.025, 'name': ['shape']})
+            params.append(
+                {
+                    "params": [nn.Parameter(self.shape.clone().detach())],
+                    "lr": 0.025,
+                    "name": ["shape"],
+                }
+            )
 
         if self.config.optimize_jaw:
-            params.append({'params': [nn.Parameter(self.jaw.clone().detach())], 'lr': 0.001, 'name': ['jaw']})
+            params.append(
+                {"params": [nn.Parameter(self.jaw.clone().detach())], "lr": 0.001, "name": ["jaw"]}
+            )
 
         return params
 
     def clone_params_color(self):
         params = [
-            {'params': [nn.Parameter(self.sh.clone())], 'lr': 0.05, 'name': ['sh']},
-            {'params': [nn.Parameter(self.tex.clone())], 'lr': 0.05, 'name': ['tex']},
+            {"params": [nn.Parameter(self.sh.clone())], "lr": 0.05, "name": ["sh"]},
+            {"params": [nn.Parameter(self.tex.clone())], "lr": 0.05, "name": ["tex"]},
         ]
 
         return params
 
     @staticmethod
     def reduce_loss(losses):
-        all_loss = 0.
+        all_loss = 0.0
         for key in losses.keys():
             all_loss = all_loss + losses[key]
-        losses['all_loss'] = all_loss
+        losses["all_loss"] = all_loss
         return all_loss
 
     def optimize_camera(self, batch, steps=1000):
@@ -380,39 +454,53 @@ class Tracker(object):
         images, landmarks, landmarks_dense, lmk_dense_mask, lmk_mask = self.parse_batch(batch)
 
         h, w = images.shape[2:4]
-        self.shape = batch['shape']
-        self.mica_shape = batch['shape'].clone().detach()  # Save it for regularization
+        self.shape = batch["shape"]
+        self.mica_shape = batch["shape"].clone().detach()  # Save it for regularization
 
         # Important to initialize
         self.create_parameters()
 
-        params = [{'params': [self.t, self.R, self.focal_length, self.principal_point], 'lr': 0.05}]
+        params = [
+            {"params": [self.t, self.R, self.focal_length, self.principal_point], "lr": 0.05}
+        ]
 
         optimizer = torch.optim.Adam(params)
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=300, gamma=0.1)
 
-        t = tqdm(range(steps), desc='', leave=True, miniters=100)
+        t = tqdm(range(steps), desc="", leave=True, miniters=100)
         for k in t:
             self.cameras = PerspectiveCameras(
                 device=self.device,
                 principal_point=self.principal_point,
                 focal_length=self.focal_length,
-                R=rotation_6d_to_matrix(self.R), T=self.t,
-                image_size=self.image_size
+                R=rotation_6d_to_matrix(self.R),
+                T=self.t,
+                image_size=self.image_size,
             )
-            _, lmk68, lmkMP = self.flame(cameras=torch.inverse(self.cameras.R), shape_params=self.shape, expression_params=self.exp, eye_pose_params=self.eyes, jaw_pose_params=self.jaw)
+            _, lmk68, lmkMP = self.flame(
+                cameras=torch.inverse(self.cameras.R),
+                shape_params=self.shape,
+                expression_params=self.exp,
+                eye_pose_params=self.eyes,
+                jaw_pose_params=self.jaw,
+            )
             points68 = self.cameras.transform_points_screen(lmk68)[..., :2]
             pointsMP = self.cameras.transform_points_screen(lmkMP)[..., :2]
 
             losses = {}
-            losses['pp_reg'] = torch.sum(self.principal_point ** 2)
-            losses['lmk68'] = util.lmk_loss(points68, landmarks[..., :2], [h, w], lmk_mask) * self.config.w_lmks
-            losses['lmkMP'] = util.lmk_loss(pointsMP, landmarks_dense[..., :2], [h, w], lmk_dense_mask) * self.config.w_lmks
+            losses["pp_reg"] = torch.sum(self.principal_point**2)
+            losses["lmk68"] = (
+                util.lmk_loss(points68, landmarks[..., :2], [h, w], lmk_mask) * self.config.w_lmks
+            )
+            losses["lmkMP"] = (
+                util.lmk_loss(pointsMP, landmarks_dense[..., :2], [h, w], lmk_dense_mask)
+                * self.config.w_lmks
+            )
 
-            all_loss = 0.
+            all_loss = 0.0
             for key in losses.keys():
                 all_loss = all_loss + losses[key]
-            losses['all_loss'] = all_loss
+            losses["all_loss"] = all_loss
 
             optimizer.zero_grad()
             all_loss.backward()
@@ -421,10 +509,16 @@ class Tracker(object):
 
             loss = all_loss.item()
             # self.writer.add_scalar('camera', loss, global_step=k)
-            t.set_description(f'Loss for camera {loss:.4f}')
+            t.set_description(f"Loss for camera {loss:.4f}")
             self.frame += 1
             if k % 100 == 0 and k > 0:
-                self.checkpoint(batch, visualizations=[[View.GROUND_TRUTH, View.LANDMARKS, View.SHAPE_OVERLAY]], frame_dst='/camera', save=False, dump_directly=True)
+                self.checkpoint(
+                    batch,
+                    visualizations=[[View.GROUND_TRUTH, View.LANDMARKS, View.SHAPE_OVERLAY]],
+                    frame_dst="/camera",
+                    save=False,
+                    dump_directly=True,
+                )
 
         self.frame = 0
 
@@ -442,17 +536,17 @@ class Tracker(object):
             optimizer = torch.optim.Adam(params_func())
             params = optimizer.param_groups
 
-            shape = self.get_param('shape', params)
-            exp = self.get_param('exp', params)
-            eyes = self.get_param('eyes', params)
-            eyelids = self.get_param('eyelids', params)
-            jaw = self.get_param('jaw', params)
-            tex = self.get_param('tex', params)
-            sh = self.get_param('sh', params)
-            t = self.get_param('t', params)
-            R = self.get_param('R', params)
-            fl = self.get_param('focal_length', params)
-            pp = self.get_param('principal_point', params)
+            shape = self.get_param("shape", params)
+            exp = self.get_param("exp", params)
+            eyes = self.get_param("eyes", params)
+            eyelids = self.get_param("eyelids", params)
+            jaw = self.get_param("jaw", params)
+            tex = self.get_param("tex", params)
+            sh = self.get_param("sh", params)
+            t = self.get_param("t", params)
+            R = self.get_param("R", params)
+            fl = self.get_param("focal_length", params)
+            pp = self.get_param("principal_point", params)
 
             scale = image_size[0] / h
             self.diff_renderer.set_size(size)
@@ -461,10 +555,10 @@ class Tracker(object):
 
             image_lmks68 = landmarks * scale
             image_lmksMP = landmarks_dense * scale
-            left_iris = batch['left_iris'] * scale
-            right_iris = batch['right_iris'] * scale
-            mask_left_iris = batch['mask_left_iris'] * scale
-            mask_right_iris = batch['mask_right_iris'] * scale
+            left_iris = batch["left_iris"] * scale
+            right_iris = batch["right_iris"] * scale
+            mask_left_iris = batch["mask_left_iris"] * scale
+            mask_right_iris = batch["mask_right_iris"] * scale
 
             self.diff_renderer.rasterizer.reset()
 
@@ -478,8 +572,9 @@ class Tracker(object):
                     device=self.device,
                     principal_point=pp,
                     focal_length=fl,
-                    R=rotation_6d_to_matrix(R), T=t,
-                    image_size=(image_size,)
+                    R=rotation_6d_to_matrix(R),
+                    T=t,
+                    image_size=(image_size,),
                 )
                 vertices, lmk68, lmkMP = self.flame(
                     cameras=torch.inverse(self.cameras.R),
@@ -487,7 +582,7 @@ class Tracker(object):
                     expression_params=exp,
                     eye_pose_params=eyes,
                     jaw_pose_params=jaw,
-                    eyelid_params=eyelids
+                    eyelid_params=eyelids,
                 )
 
                 proj_lmksMP = self.cameras.transform_points_screen(lmkMP)[..., :2]
@@ -497,24 +592,61 @@ class Tracker(object):
                 right_eye, left_eye = eyes[:, :6], eyes[:, 6:]
 
                 # Landmarks sparse term
-                losses['loss/lmk_oval'] = util.oval_lmk_loss(proj_lmks68, image_lmks68, image_size, lmk_mask) * self.config.w_lmks_oval
-                losses['loss/lmk_68'] = util.lmk_loss(proj_lmks68, image_lmks68, image_size, lmk_mask) * self.config.w_lmks_68
-                losses['loss/lmk_MP'] = util.face_lmk_loss(proj_lmksMP, image_lmksMP, image_size, True, lmk_dense_mask) * self.config.w_lmks
-                losses['loss/lmk_eye'] = util.eye_closure_lmk_loss(proj_lmksMP, image_lmksMP, image_size, lmk_dense_mask) * self.config.w_lmks_lid
-                losses['loss/lmk_mouth'] = util.mouth_lmk_loss(proj_lmksMP, image_lmksMP, image_size, True, lmk_dense_mask) * self.config.w_lmks_mouth
-                losses['loss/lmk_iris_left'] = util.lmk_loss(proj_vertices[:, left_iris_flame, ...], left_iris, image_size, mask_left_iris) * self.config.w_lmks_iris
-                losses['loss/lmk_iris_right'] = util.lmk_loss(proj_vertices[:, right_iris_flame, ...], right_iris, image_size, mask_right_iris) * self.config.w_lmks_iris
+                losses["loss/lmk_oval"] = (
+                    util.oval_lmk_loss(proj_lmks68, image_lmks68, image_size, lmk_mask)
+                    * self.config.w_lmks_oval
+                )
+                losses["loss/lmk_68"] = (
+                    util.lmk_loss(proj_lmks68, image_lmks68, image_size, lmk_mask)
+                    * self.config.w_lmks_68
+                )
+                losses["loss/lmk_MP"] = (
+                    util.face_lmk_loss(proj_lmksMP, image_lmksMP, image_size, True, lmk_dense_mask)
+                    * self.config.w_lmks
+                )
+                losses["loss/lmk_eye"] = (
+                    util.eye_closure_lmk_loss(
+                        proj_lmksMP, image_lmksMP, image_size, lmk_dense_mask
+                    )
+                    * self.config.w_lmks_lid
+                )
+                losses["loss/lmk_mouth"] = (
+                    util.mouth_lmk_loss(
+                        proj_lmksMP, image_lmksMP, image_size, True, lmk_dense_mask
+                    )
+                    * self.config.w_lmks_mouth
+                )
+                losses["loss/lmk_iris_left"] = (
+                    util.lmk_loss(
+                        proj_vertices[:, left_iris_flame, ...],
+                        left_iris,
+                        image_size,
+                        mask_left_iris,
+                    )
+                    * self.config.w_lmks_iris
+                )
+                losses["loss/lmk_iris_right"] = (
+                    util.lmk_loss(
+                        proj_vertices[:, right_iris_flame, ...],
+                        right_iris,
+                        image_size,
+                        mask_right_iris,
+                    )
+                    * self.config.w_lmks_iris
+                )
 
                 # Reguralizers
-                losses['reg/exp'] = torch.sum(exp ** 2) * self.config.w_exp
-                losses['reg/sym'] = torch.sum((right_eye - left_eye) ** 2) * 8.0
-                losses['reg/jaw'] = torch.sum((I6D - jaw) ** 2) * self.config.w_jaw
-                losses['reg/eye_lids'] = torch.sum((eyelids[:, 0] - eyelids[:, 1]) ** 2)
-                losses['reg/eye_left'] = torch.sum((I6D - left_eye) ** 2)
-                losses['reg/eye_right'] = torch.sum((I6D - right_eye) ** 2)
-                losses['reg/shape'] = torch.sum((shape - self.mica_shape) ** 2) * self.config.w_shape
-                losses['reg/tex'] = torch.sum(tex ** 2) * self.config.w_tex
-                losses['reg/pp'] = torch.sum(pp ** 2)
+                losses["reg/exp"] = torch.sum(exp**2) * self.config.w_exp
+                losses["reg/sym"] = torch.sum((right_eye - left_eye) ** 2) * 8.0
+                losses["reg/jaw"] = torch.sum((I6D - jaw) ** 2) * self.config.w_jaw
+                losses["reg/eye_lids"] = torch.sum((eyelids[:, 0] - eyelids[:, 1]) ** 2)
+                losses["reg/eye_left"] = torch.sum((I6D - left_eye) ** 2)
+                losses["reg/eye_right"] = torch.sum((I6D - right_eye) ** 2)
+                losses["reg/shape"] = (
+                    torch.sum((shape - self.mica_shape) ** 2) * self.config.w_shape
+                )
+                losses["reg/tex"] = torch.sum(tex**2) * self.config.w_tex
+                losses["reg/pp"] = torch.sum(pp**2)
 
                 # Dense term (look at the config pyr_levels)
                 if k > 0 or self.is_initializing:
@@ -522,10 +654,14 @@ class Tracker(object):
                     ops = self.diff_renderer(vertices, albedos, sh, self.cameras)
 
                     # Photometric dense term
-                    grid = ops['position_images'].permute(0, 2, 3, 1)[:, :, :, :2]
-                    sampled_image = F.grid_sample(flipped, grid * aspect_ratio, align_corners=False)
+                    grid = ops["position_images"].permute(0, 2, 3, 1)[:, :, :, :2]
+                    sampled_image = F.grid_sample(
+                        flipped, grid * aspect_ratio, align_corners=False
+                    )
 
-                    losses['loss/pho'] = util.pixel_loss(ops['images'], sampled_image, self.parse_mask(ops, batch)) * pho_weight_func(k)
+                    losses["loss/pho"] = util.pixel_loss(
+                        ops["images"], sampled_image, self.parse_mask(ops, batch)
+                    ) * pho_weight_func(k)
 
                 all_loss = self.reduce_loss(losses)
                 optimizer.zero_grad()
@@ -538,7 +674,13 @@ class Tracker(object):
                 self.global_step += 1
 
                 if p % iters == 0:
-                    logs.append(f"Color loss for level {k} [frame {str(self.frame).zfill(4)}] =" + reduce(lambda a, b: a + f' {b}={round(losses[b].item(), 4)}', [""] + list(losses.keys())))
+                    logs.append(
+                        f"Color loss for level {k} [frame {str(self.frame).zfill(4)}] ="
+                        + reduce(
+                            lambda a, b: a + f" {b}={round(losses[b].item(), 4)}",
+                            [""] + list(losses.keys()),
+                        )
+                    )
 
                 loss_color = all_loss.item()
 
@@ -546,13 +688,24 @@ class Tracker(object):
                     best_loss = loss_color
                     self.update(optimizer.param_groups)
 
-        for log in logs: logger.info(log)
+        for log in logs:
+            logger.info(log)
 
-    def checkpoint(self, batch, visualizations=[[View.GROUND_TRUTH, View.LANDMARKS, View.HEATMAP], [View.COLOR_OVERLAY, View.SHAPE_OVERLAY, View.SHAPE]], frame_dst='/video', save=True, dump_directly=False):
+    def checkpoint(
+        self,
+        batch,
+        visualizations=[
+            [View.GROUND_TRUTH, View.LANDMARKS, View.HEATMAP],
+            [View.COLOR_OVERLAY, View.SHAPE_OVERLAY, View.SHAPE],
+        ],
+        frame_dst="/video",
+        save=True,
+        dump_directly=False,
+    ):
         batch = self.to_cuda(batch)
         images, landmarks, landmarks_dense, _, _ = self.parse_batch(batch)
 
-        input_image = util.to_image(batch['image'].clone()[0].cpu().numpy())
+        input_image = util.to_image(batch["image"].clone()[0].cpu().numpy())
 
         savefolder = self.save_folder + self.actor_name + frame_dst
         Path(savefolder).mkdir(parents=True, exist_ok=True)
@@ -562,8 +715,10 @@ class Tracker(object):
                 device=self.device,
                 principal_point=self.principal_point,
                 focal_length=self.focal_length,
-                R=rotation_6d_to_matrix(self.R), T=self.t,
-                image_size=self.image_size)
+                R=rotation_6d_to_matrix(self.R),
+                T=self.t,
+                image_size=self.image_size,
+            )
 
             self.diff_renderer.rasterizer.reset()
             self.diff_renderer.set_size(self.get_image_size())
@@ -575,18 +730,18 @@ class Tracker(object):
                 expression_params=self.exp,
                 eye_pose_params=self.eyes,
                 jaw_pose_params=self.jaw,
-                eyelid_params=self.eyelids
+                eyelid_params=self.eyelids,
             )
 
             lmk68 = self.cameras.transform_points_screen(lmk68, image_size=self.image_size)
             lmkMP = self.cameras.transform_points_screen(lmkMP, image_size=self.image_size)
 
             albedos = self.flametex(self.tex)
-            albedos = F.interpolate(albedos, self.get_image_size(), mode='bilinear')
+            albedos = F.interpolate(albedos, self.get_image_size(), mode="bilinear")
             ops = self.diff_renderer(vertices, albedos, self.sh, cameras=self.cameras)
             mask = (self.parse_mask(ops, batch, visualization=True) > 0).float()
-            predicted_images = (ops['images'] * mask + (images * (1.0 - mask)))[0]
-            shape_mask = ((ops['alpha_images'] * ops['mask_images_mesh']) > 0.).int()[0]
+            predicted_images = (ops["images"] * mask + (images * (1.0 - mask)))[0]
+            shape_mask = ((ops["alpha_images"] * ops["mask_images_mesh"]) > 0.0).int()[0]
 
             final_views = []
 
@@ -602,12 +757,22 @@ class Tracker(object):
                         row.append(shape)
                     if view == View.LANDMARKS:
                         gt_lmks = images.clone()
-                        gt_lmks = util.tensor_vis_landmarks(gt_lmks, torch.cat([landmarks_dense, landmarks[:, :17, :]], dim=1), color='g')
-                        gt_lmks = util.tensor_vis_landmarks(gt_lmks, torch.cat([lmkMP, lmk68[:, :17, :]], dim=1), color='r')
+                        gt_lmks = util.tensor_vis_landmarks(
+                            gt_lmks,
+                            torch.cat([landmarks_dense, landmarks[:, :17, :]], dim=1),
+                            color="g",
+                        )
+                        gt_lmks = util.tensor_vis_landmarks(
+                            gt_lmks, torch.cat([lmkMP, lmk68[:, :17, :]], dim=1), color="r"
+                        )
                         row.append(gt_lmks[0].cpu().numpy())
                     if view == View.SHAPE_OVERLAY:
                         shape = self.render_shape(vertices, white=False)[0] * shape_mask
-                        blend = images[0] * (1 - shape_mask) + images[0] * shape_mask * 0.3 + shape * 0.7 * shape_mask
+                        blend = (
+                            images[0] * (1 - shape_mask)
+                            + images[0] * shape_mask * 0.3
+                            + shape * 0.7 * shape_mask
+                        )
                         row.append(blend.cpu().numpy())
                     if view == View.HEATMAP:
                         t = images[0].cpu()
@@ -621,8 +786,8 @@ class Tracker(object):
             final_views = util.merge_views(final_views)
             frame_id = str(self.frame).zfill(5)
 
-            cv2.imwrite('{}/{}.jpg'.format(savefolder, frame_id), final_views)
-            cv2.imwrite('{}/{}.png'.format(self.input_folder, frame_id), input_image)
+            cv2.imwrite("{}/{}.jpg".format(savefolder, frame_id), final_views)
+            cv2.imwrite("{}/{}.png".format(self.input_folder, frame_id), input_image)
 
             if not save:
                 return
@@ -631,18 +796,39 @@ class Tracker(object):
             self.save_checkpoint(frame_id)
 
             # DEPTH
-            depth_view = self.diff_renderer.render_depth(vertices, cameras=self.cameras, faces=torch.cat([util.get_flame_extra_faces(), self.diff_renderer.faces], dim=1))
+            depth_view = self.diff_renderer.render_depth(
+                vertices,
+                cameras=self.cameras,
+                faces=torch.cat([util.get_flame_extra_faces(), self.diff_renderer.faces], dim=1),
+            )
             depth = depth_view[0].permute(1, 2, 0)[..., 2:].cpu().numpy() * 1000.0
-            cv2.imwrite('{}/{}.png'.format(self.depth_folder, frame_id), depth.astype(np.uint16))
+            cv2.imwrite("{}/{}.png".format(self.depth_folder, frame_id), depth.astype(np.uint16))
 
     def optimize_frame(self, batch):
         batch = self.to_cuda(batch)
         images = self.parse_batch(batch)[0]
         h, w = images.shape[2:4]
         pyramid_size = np.array([h, w])
-        pyramid = util.get_gaussian_pyramid([(pyramid_size * size, util.round_up_to_odd(steps)) for size, steps in self.pyr_levels], images, self.kernel_size, self.sigma)
-        self.optimize_color(batch, pyramid, self.clone_params_tracking, lambda k: self.config.w_pho, reg_from_prev=True)
-        self.checkpoint(batch, visualizations=[[View.GROUND_TRUTH, View.COLOR_OVERLAY, View.LANDMARKS, View.SHAPE]])
+        pyramid = util.get_gaussian_pyramid(
+            [
+                (pyramid_size * size, util.round_up_to_odd(steps))
+                for size, steps in self.pyr_levels
+            ],
+            images,
+            self.kernel_size,
+            self.sigma,
+        )
+        self.optimize_color(
+            batch,
+            pyramid,
+            self.clone_params_tracking,
+            lambda k: self.config.w_pho,
+            reg_from_prev=True,
+        )
+        self.checkpoint(
+            batch,
+            visualizations=[[View.GROUND_TRUTH, View.COLOR_OVERLAY, View.LANDMARKS, View.SHAPE]],
+        )
 
     def optimize_video(self):
         self.is_initializing = False
@@ -657,9 +843,9 @@ class Tracker(object):
         util.images_to_video(self.output_folder, self.config.fps)
 
     def parse_batch(self, batch):
-        images = batch['image']
-        landmarks = batch['lmk']
-        landmarks_dense = batch['dense_lmk']
+        images = batch["image"]
+        landmarks = batch["lmk"]
+        landmarks_dense = batch["dense_lmk"]
 
         lmk_dense_mask = ~(landmarks_dense.sum(2, keepdim=True) == 0)
         lmk_mask = ~(landmarks.sum(2, keepdim=True) == 0)
@@ -669,24 +855,37 @@ class Tracker(object):
         mask_left_iris = lmk_dense_mask[:, left_iris_mp, :]
         mask_right_iris = lmk_dense_mask[:, right_iris_mp, :]
 
-        batch['left_iris'] = left_iris
-        batch['right_iris'] = right_iris
-        batch['mask_left_iris'] = mask_left_iris
-        batch['mask_right_iris'] = mask_right_iris
+        batch["left_iris"] = left_iris
+        batch["right_iris"] = right_iris
+        batch["mask_left_iris"] = mask_left_iris
+        batch["mask_right_iris"] = mask_right_iris
 
-        return images, landmarks, landmarks_dense[:, mediapipe_idx, :2], lmk_dense_mask[:, mediapipe_idx, :], lmk_mask
+        return (
+            images,
+            landmarks,
+            landmarks_dense[:, mediapipe_idx, :2],
+            lmk_dense_mask[:, mediapipe_idx, :],
+            lmk_mask,
+        )
 
     def prepare_data(self):
         self.data_generator = GeneratorDataset(self.config.actor, self.config)
         self.data_generator.run()
         self.dataset = ImagesDataset(self.config)
-        self.dataloader = DataLoader(self.dataset, batch_size=1, num_workers=0, shuffle=False, pin_memory=True, drop_last=False)
+        self.dataloader = DataLoader(
+            self.dataset,
+            batch_size=1,
+            num_workers=0,
+            shuffle=False,
+            pin_memory=True,
+            drop_last=False,
+        )
 
     def initialize_tracking(self):
         self.is_initializing = True
         keyframes = self.config.keyframes
         if len(keyframes) == 0:
-            logger.error('[ERROR] Keyframes are empty!')
+            logger.error("[ERROR] Keyframes are empty!")
             exit(0)
         keyframes.insert(0, keyframes[0])
         for i, j in enumerate(keyframes):
@@ -694,7 +893,15 @@ class Tracker(object):
             images = self.parse_batch(batch)[0]
             h, w = images.shape[2:4]
             pyramid_size = np.array([h, w])
-            pyramid = util.get_gaussian_pyramid([(pyramid_size * size, util.round_up_to_odd(steps * 2)) for size, steps in self.pyr_levels], images, self.kernel_size, self.sigma)
+            pyramid = util.get_gaussian_pyramid(
+                [
+                    (pyramid_size * size, util.round_up_to_odd(steps * 2))
+                    for size, steps in self.pyr_levels
+                ],
+                images,
+                self.kernel_size,
+                self.sigma,
+            )
             params = self.clone_params_initialization
             if i == 0:
                 params = self.clone_params_color
@@ -702,7 +909,13 @@ class Tracker(object):
                 for k, level in enumerate(pyramid):
                     self.save_tensor(level[0], f"{self.pyramid_folder}/{k}.png")
             self.optimize_color(batch, pyramid, params, lambda k: self.config.w_pho)
-            self.checkpoint(batch, visualizations=[[View.GROUND_TRUTH, View.COLOR_OVERLAY, View.LANDMARKS, View.SHAPE]], frame_dst='/initialization')
+            self.checkpoint(
+                batch,
+                visualizations=[
+                    [View.GROUND_TRUTH, View.COLOR_OVERLAY, View.LANDMARKS, View.SHAPE]
+                ],
+                frame_dst="/initialization",
+            )
             self.frame += 1
 
         self.save_canonical()
@@ -717,24 +930,24 @@ class Tracker(object):
         self.output_video()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     expected_content = {
-        'root': {'.obj', '.avi', '.log'}, 
-        'depth': {'.png'}, 
-        'checkpoint': {'.frame'}, 
-        'logs': {'.7'}, 
-        'mesh': {'.ply'}, 
-        'camera': {'.jpg'}, 
-        'input': {'.png'}, 
-        'pyramid': {'.png'}, 
-        'video': {'.jpg'}, 
-        'initialization': {'.jpg'}
+        "root": {".obj", ".avi", ".log"},
+        "depth": {".png"},
+        "checkpoint": {".frame"},
+        "logs": {".7"},
+        "mesh": {".ply"},
+        "camera": {".jpg"},
+        "input": {".png"},
+        "pyramid": {".png"},
+        "video": {".jpg"},
+        "initialization": {".jpg"},
     }
 
     config = parse_args()
 
     if hasattr(config, "is_base_config") and config.is_base_config:
-        # Generate all the configs from the base_config. That is, if directory structure of the 
+        # Generate all the configs from the base_config. That is, if directory structure of the
         # base config's 'actor' folder (given from the 'actor' key) is:
         # face_recordings/
         # ├── actor_1
@@ -744,32 +957,49 @@ if __name__ == '__main__':
         # ├── actor_2
         # │   ├── bite_lower_lip
         # │   ├── ...
-        # Then, the 3 generated configs will have 'actor' key: 
+        # Then, the 3 generated configs will have 'actor' key:
         # face_recordings/actor_1/bite_lower_lip, face_recordings/actor_1/bite_upper_lip,
         # and face_recordings/actor_2/bite_lower_lip, respectively.
         configs = generate_configs_from_base(base_cfg=config)
 
+        # One config looks like this:
+        # actor: './bulk/data/processed/face_recordings/C0002/bite_lower_lip'
+        # save_folder: './bulk/data/interim/face_recordings/Metrical-Tracker/C0002/'
+        # So, depending on the config, we need to check a different folder to see whether it has
+        # been processed or not.
+        unique_save_folders = {config.save_folder for config in configs}
+
         # Get the current folders in the config.save_folder that were processed before, i.e.,
         # their content matches the expected content
-        processed_folders = util.filter_subfolders_by_depth(
-            config.save_folder,
-            filter_func=util.folder_content_matches_expected,
-            depth=1,
-            return_on=True,
-            path_as_str=False, # Return the path as a Path object
-            ignore="logs", # Ignore the subfolder "logs", as its extension is .7, .8, .10, etc.
-            expected_content=expected_content,
-        )
+        processed_folders = []
+        for save_folder in unique_save_folders:
+            processed_folders.extend(
+                util.filter_subfolders_by_depth(
+                    save_folder,
+                    filter_func=util.folder_content_matches_expected,
+                    depth=1,
+                    return_on=True,
+                    path_as_str=False,  # Return the path as a Path object
+                    # Ignore the subfolder "logs", as its extension is .7, .8, .10, etc.
+                    ignore="logs",
+                    expected_content=expected_content,
+                )
+            )
 
-        # Get the name of the folder, instead of the full path
-        processed_folders = [folder.name for folder in processed_folders]
+        # Get the parent/name of the folder, instead of the full path
+        processed_folders = [
+            str(Path(folder.parent.stem) / folder.name) for folder in processed_folders
+        ]
         print(f"Processed folders: {processed_folders}")
 
         for i, config in enumerate(configs):
             # Check if the current config.actor folder was processed before
-            if Path(config.actor).name in processed_folders:
-                print(f"\n>>> ({i + 1}/{len(configs)}) Folder {config.actor} was already "
-                      + "processed. Skipping...")
+            current_actor = Path(config.actor)
+            if str(Path(current_actor.parent.stem) / current_actor.name) in processed_folders:
+                print(
+                    f"\n>>> ({i + 1}/{len(configs)}) Folder {config.actor} was already "
+                    "processed. Skipping..."
+                )
                 continue
 
             if hasattr(config, "test_run") and config.test_run:
@@ -782,7 +1012,7 @@ if __name__ == '__main__':
 
             print(f"\n>>> ({i + 1}/{len(configs)}) Running tracker for {config.actor}...")
             start_time = time()
-            ff = Tracker(config, device='cuda:0')
+            ff = Tracker(config, device="cuda:0")
             ff.run()
             print("\t\t Finished in", round(time() - start_time, 2), "seconds.")
     else:
@@ -792,6 +1022,6 @@ if __name__ == '__main__':
             print("The complete config is:\n")
             print(config)
             exit(0)
-        
-        ff = Tracker(config, device='cuda:0')
+
+        ff = Tracker(config, device="cuda:0")
         ff.run()
