@@ -18,6 +18,8 @@ dependencies:
   - ffmpeg=4.4.2
   - pip:
       - albumentations
+      - onnxruntime
+      - yacs
       - numpy<2
       - tqdm
       - pillow
