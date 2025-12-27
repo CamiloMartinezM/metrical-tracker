@@ -16,7 +16,7 @@ is_base_config: true
 
 # This will just print the configs extracted from the base_config as debug
 # and won't run a Tracker instance
-test_run: true
+test_run: false
 
 # Rest of the Tracker config
 optimize_shape: true

@@ -26,7 +26,7 @@ from pytorch3d.transforms import rotation_6d_to_matrix, matrix_to_rotation_6d
 from skimage.io import imread
 from loguru import logger
 
-from flame.lbs import lbs
+from .lbs import lbs
 
 I = matrix_to_rotation_6d(torch.eye(3)[None].cuda())
 
@@ -101,7 +101,12 @@ class FLAME(nn.Module):
         self._register_default_params('expression_params', config.num_exp_params)
 
         # Static and Dynamic Landmark embeddings for FLAME
-        mediapipe_lmk_embedding = np.load('flame/mediapipe/mediapipe_landmark_embedding.npz', allow_pickle=True, encoding='latin1')
+        if hasattr(config, "mediapipe_lmk_embedding_path"):
+            self.mediapipe_lmk_embedding_path = config.mediapipe_lmk_embedding_path
+        else:
+            self.mediapipe_lmk_embedding_path = 'flame/mediapipe/mediapipe_landmark_embedding.npz'
+
+        mediapipe_lmk_embedding = np.load(self.mediapipe_lmk_embedding_path, allow_pickle=True, encoding='latin1')
         lmk_embeddings = np.load(config.flame_lmk_path, allow_pickle=True, encoding='latin1')
         lmk_embeddings = lmk_embeddings[()]
 

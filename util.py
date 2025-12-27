@@ -567,7 +567,7 @@ def folder_content_matches_expected(
     filtered_expected_content = {
         k: v for k, v in expected_content.items() if not ignore or (ignore and k not in ignore)
     }
-            
+
     return actual_content == filtered_expected_content
 
 
@@ -638,6 +638,7 @@ def filter_subfolders_by_depth(
     base_depth = root_path.rstrip(os.sep).count(os.sep)
     
     for current_path, subdirs, _ in os.walk(root_path):
+
         # Calculate current depth relative to the base folder
         current_depth = current_path.rstrip(os.sep).count(os.sep) - base_depth
 
