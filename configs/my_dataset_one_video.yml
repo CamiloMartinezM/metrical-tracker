@@ -1,0 +1,18 @@
+# Tracker config
+actor: './bulk/data/processed/face_recordings_mica/subject-02/ses-1'
+save_folder: './bulk/data/interim/face_recordings/Metrical-Tracker/Metrical-Tracker/subject-02/ses-1'
+
+# This will treat this config as a base_config and run a Tracker instance
+# for each actor/class/video.mp4 found in the actor path
+is_base_config: false
+
+# This will just print the configs extracted from the base_config as debug
+# and won't run a Tracker instance
+test_run: false
+
+# Rest of the Tracker config
+optimize_shape: true
+optimize_jaw: true
+begin_frames: 1
+fps: 30
+keyframes: [ 0, 1 ]
