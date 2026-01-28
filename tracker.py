@@ -15,10 +15,13 @@
 # Contact: mica@tue.mpg.de
 
 import os.path
+import random
 from enum import Enum
 from functools import reduce
 from glob import glob
 from pathlib import Path
+from pprint import pprint
+from time import time
 
 import cv2
 import numpy as np
@@ -30,15 +33,15 @@ import trimesh
 from loguru import logger
 from pytorch3d.io import load_obj
 from pytorch3d.renderer import (
-    RasterizationSettings,
-    PointLights,
-    MeshRenderer,
-    MeshRasterizer,
-    TexturesVertex,
-    SoftPhongShader,
-    look_at_view_transform,
-    PerspectiveCameras,
     BlendParams,
+    MeshRasterizer,
+    MeshRenderer,
+    PerspectiveCameras,
+    PointLights,
+    RasterizationSettings,
+    SoftPhongShader,
+    TexturesVertex,
+    look_at_view_transform,
 )
 from pytorch3d.structures import Meshes
 from pytorch3d.transforms import matrix_to_rotation_6d, rotation_6d_to_matrix
@@ -48,9 +51,7 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 import util
-from pprint import pprint
-from time import time
-from configs.config import parse_args, generate_configs_from_base
+from configs.config import generate_configs_from_base, parse_args
 from datasets.generate_dataset import GeneratorDataset
 from datasets.image_dataset import ImagesDataset
 from face_detector import FaceDetector
@@ -962,6 +963,9 @@ if __name__ == "__main__":
         # and face_recordings/actor_2/bite_lower_lip, respectively.
         configs = generate_configs_from_base(base_cfg=config)
 
+        # Shuffle the configs to minimize collision probability between concurrent processes
+        random.shuffle(configs)
+
         # One config looks like this:
         # actor: './bulk/data/processed/face_recordings/C0002/bite_lower_lip'
         # save_folder: './bulk/data/interim/face_recordings/Metrical-Tracker/C0002/'
@@ -990,16 +994,36 @@ if __name__ == "__main__":
         processed_folders = [
             str(Path(folder.parent.stem) / folder.name) for folder in processed_folders
         ]
-        print(f"Processed folders: {processed_folders}")
+        print(f"Processed folders (found in output): {processed_folders}")
 
         for i, config in enumerate(configs):
             # Check if the current config.actor folder was processed before
             current_actor = Path(config.actor)
+
+            # Define lock and processed file paths in the input directory
+            lock_file = current_actor / ".lock"
+            processed_file = current_actor / ".processed"
+
+            # Check if the folder was marked as processed
+            if processed_file.exists():
+                print(
+                    f"\n>>> ({i + 1}/{len(configs)}) Skipping {config.actor} "
+                    "(found .processed file)."
+                )
+                continue
+
             if str(Path(current_actor.parent.stem) / current_actor.name) in processed_folders:
                 print(
                     f"\n>>> ({i + 1}/{len(configs)}) Folder {config.actor} was already "
                     "processed. Skipping..."
                 )
+                # Optionally mark as processed to speed up future checks
+                if not processed_file.exists():
+                    try:
+                        with open(processed_file, "w") as f:
+                            f.write(f"Processed detected from output at {time()}")
+                    except Exception:
+                        pass
                 continue
 
             if hasattr(config, "test_run") and config.test_run:
@@ -1010,11 +1034,39 @@ if __name__ == "__main__":
                 print(config)
                 break
 
-            print(f"\n>>> ({i + 1}/{len(configs)}) Running tracker for {config.actor}...")
-            start_time = time()
-            ff = Tracker(config, device="cuda:0")
-            ff.run()
-            print("\t\t Finished in", round(time() - start_time, 2), "seconds.")
+            # Attempt to acquire a lock for this dataset
+            try:
+                # 'x' mode creates the file exclusively; fails if it already exists
+                with open(lock_file, "x") as f:
+                    f.write(f"Processing started at {time()}")
+            except FileExistsError:
+                print(
+                    f"\n>>> ({i + 1}/{len(configs)}) Skipping {config.actor} "
+                    "(locked by another process)."
+                )
+                continue
+
+            # Wrap execution in try/finally to ensure lock removal
+            try:
+                print(f"\n>>> ({i + 1}/{len(configs)}) Running tracker for {config.actor}...")
+                start_time = time()
+                ff = Tracker(config, device="cuda:0")
+                ff.run()
+                print("\t\t Finished in", round(time() - start_time, 2), "seconds.")
+
+                # Create .processed file only on successful completion
+                with open(processed_file, "w") as f:
+                    f.write(f"Processed successfully at {time()}")
+
+            except Exception as e:
+                print(f"\n!!! Error processing {config.actor}: {e}")
+                # We re-raise the exception or let it continue depending on desired robustness.
+                # Assuming we want to move to the next file if one crashes, we could just print.
+                # raise e
+            finally:
+                # Always remove the lock file after attempt
+                if lock_file.exists():
+                    lock_file.unlink()
     else:
         # Original behaviour
         if hasattr(config, "test_run") and config.test_run:
