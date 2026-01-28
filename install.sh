@@ -60,10 +60,6 @@ mv data/mesh/* data/
 rm -rf data/mesh
 rm -rf mesh.zip
 
-source configure_environment.sh
-echo -e "\n${COLOR}Installing micromamba env..."
-micromamba env create -f environment.yml
-
 echo -e "\n${COLOR}Installation has finished!"
 
 # Reset the terminal color
