@@ -21,6 +21,7 @@ from functools import reduce
 from glob import glob
 from pathlib import Path
 from pprint import pprint
+import shutil
 from time import time
 
 import cv2
@@ -962,6 +963,51 @@ if __name__ == "__main__":
         # face_recordings/actor_1/bite_lower_lip, face_recordings/actor_1/bite_upper_lip,
         # and face_recordings/actor_2/bite_lower_lip, respectively.
         configs = generate_configs_from_base(base_cfg=config)
+
+        # Cleanup Phase - Detect and remove stale/incomplete runs
+        print("\n>>> Checking for stale or incomplete runs...")
+        for config in configs:
+            input_dir = Path(config.actor)
+            # Construct output path based on Tracker logic: save_folder + config_name (actor name)
+            output_dir = Path(config.save_folder) / config.config_name
+
+            lock_file = input_dir / ".lock"
+            processed_file = input_dir / ".processed"
+
+            # We only clean up if:
+            # 1. The output folder exists (meaning it started at some point)
+            # 2. It is NOT currently running (no .lock)
+            # 3. It is NOT successfully finished (no .processed)
+            if output_dir.exists() and not lock_file.exists() and not processed_file.exists():
+                # Check if the output content is valid/complete
+                is_complete = util.folder_content_matches_expected(
+                    output_dir,
+                    expected_content,
+                    ignore={"logs"},  # Ignore logs folder as it has dynamic extensions
+                )
+
+                if not is_complete:
+                    print(f"!!! Detected stale run for {config.config_name}. Cleaning up...")
+
+                    # 1. Delete the incomplete output folder
+                    try:
+                        shutil.rmtree(output_dir)
+                        print(f"    - Deleted output: {output_dir}")
+                    except Exception as e:
+                        print(f"    - Error deleting output {output_dir}: {e}")
+
+                    # 2. Clean the input folder (Keep only source files)
+                    whitelist = {"identity.npy", "video.mp4"}
+                    try:
+                        for item in input_dir.iterdir():
+                            if item.name not in whitelist:
+                                if item.is_dir():
+                                    shutil.rmtree(item)
+                                else:
+                                    item.unlink()
+                        print(f"    - Cleaned input: {input_dir}")
+                    except Exception as e:
+                        print(f"    - Error cleaning input {input_dir}: {e}")
 
         # Shuffle the configs to minimize collision probability between concurrent processes
         random.shuffle(configs)
